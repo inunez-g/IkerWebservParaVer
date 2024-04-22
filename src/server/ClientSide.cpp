@@ -15,6 +15,10 @@
 // Librerias Iker
 #include <filesystem>
 #include <iostream>
+#include <iostream>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <string>
 
 ClientSide::ClientSide( void ) {}
 
@@ -116,6 +120,40 @@ int ClientSide::openFile( std::string _route ) {
 	return 0;
 }
 
+bool isDirectory(const std::string& path) {
+    DIR* dir = opendir(path.c_str());
+    if (dir) {
+        closedir(dir);
+        return true;
+    }
+    return false;
+}
+
+std::string generate_autoindex(const std::string& directoryPath, string autoindex) {
+
+    // Abre el directorio
+    DIR* dir = opendir(directoryPath.c_str());
+    if (!dir) {
+        return autoindex; // Error al abrir el directorio
+    }
+
+    autoindex += "<html><head><title>Index of " + directoryPath + "</title></head>\n";
+    autoindex += "<body><h1>Index of " + directoryPath + "</h1><hr><ul>\n";
+
+    // Lee el contenido del directorio
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != NULL) {
+        autoindex += "<li><a href=\"" + std::string(entry->d_name) + "\">" + std::string(entry->d_name) + "</a></li>\n";
+    }
+
+    autoindex += "</ul><hr></body></html>\n";
+
+    // Cierra el directorio
+    closedir(dir);
+
+    return autoindex;
+}
+
 bool isAbsolutePath(const std::string& path) {
     // Verifica si la ruta comienza con "http://" o "https://"
     return (path.find("http://") == 0 || path.find("https://") == 0);
@@ -128,6 +166,7 @@ void ClientSide::getMethod( void )
 	unsigned long max_length = 3000;
 	location["/web2.html"] = "web.html";
 	location["/web3.html"] = "http://localhost:405/extra/web3.html";
+	location["/Extra/hola.html"] = "https://www.youtube.com";
 	//alias["/kapouet"] = "/mi_carpeta";
 	std::string allowed_methods = "GET POST";
 	std::cout << "GETMETHOD" << std::endl;
@@ -148,14 +187,14 @@ void ClientSide::getMethod( void )
 			{
     			// Redirección 301
 				std::cout << "AQUI VA" << std::endl;
-    			httpResponse = "HTTP/1.1 301 Moved Permanently\r\n";
+    			httpResponse = "HTTP/1.1 302 Found\r\n";
     			httpResponse += "Location: " + location[file] + "\r\n";
 				httpResponse += "\r\n";
 				send(clientFd, httpResponse.data(), httpResponse.size(), 0);
 			}
 			else if (!location[file].empty())
 			{
-				httpResponse = "HTTP/1.1 302 Found\r\n";
+				httpResponse = "HTTP/1.1 301 Moved Permanently\r\n";
 				std::string host = "http://localhost:405/";
     			httpResponse += "Location: " + host + location[file] + "\r\n";
     			httpResponse += "\r\n";
@@ -172,8 +211,19 @@ void ClientSide::getMethod( void )
 			std::ifstream archivo("resources/GET" + file);
 			std::cout << "Hola estoy aqui " << "resources/GET" + file << std::endl;
 			std::ostringstream oss;
-			if (archivo.is_open())
-			{
+			std::string directoryPath = "resources/GET" + file;
+			if (isDirectory(directoryPath)) {
+                // Generar autoindex
+                std::string autoindex;
+                autoindex = generate_autoindex(directoryPath, autoindex);
+                // Respuesta 200 OK con el autoindex
+                httpResponse = "HTTP/1.1 200 OK\r\n";
+                httpResponse += "Content-Type: text/html\r\n";
+                httpResponse += "Content-Length: " + std::to_string(autoindex.size()) + "\r\n";
+                httpResponse += "\r\n";
+                httpResponse += autoindex;
+                send(clientFd, httpResponse.data(), httpResponse.size(), 0);
+            } else if (archivo.is_open()){
 				std::cout << "y" << std::endl;
 				oss << archivo.rdbuf();
 				std::string httpResponse;
@@ -263,12 +313,29 @@ void ClientSide::postMethod( void )
 void ClientSide::deleteMethod( void )
 {
 	std::cout << "DELETEMETHOD" << std::endl;
+	std::cout << "Hola estoy aqui " << "resources/GET" + file << std::endl;
 	std::string httpResponse = "HTTP/1.1 500 Internal Server Error\r\n";
     // Intentar eliminar el archivo
-    if (std::remove(("resources/GET/" + file).c_str()) != 0)
-		httpResponse = "HTTP/1.1 404 Not Found\r\n";
+    if (std::remove(("resources/GET" + file).c_str()) != 0)
+	{
+		if (isDirectory("resources/GET" + file))
+		{
+			std::string httpResponse = "HTTP/1.1 409 Conflict\r\n";
+    		httpResponse += "Content-Type: text/plain\r\n";
+    		httpResponse += "\r\n";
+    		httpResponse += "No se puede eliminar el directorio. Elimine los archivos dentro del directorio primero.\r\n";
+			std::cout << "J" << std::endl;
+		}
+		else{
+			httpResponse = "HTTP/1.1 404 Not Found\r\n";
+			std::cout << "Y" << std::endl;
+		}
+	}
 	else
+	{
 		httpResponse = "HTTP/1.1 200 OK\r\n";
+		std::cout << "O" << std::endl;
+	}
 	send(clientFd, httpResponse.data(), httpResponse.size(), 0);
 	std::cout << "TERMINO" << std::endl;
 	close(clientFd);
